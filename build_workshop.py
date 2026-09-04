@@ -1,5 +1,5 @@
-"""Генератор workshop.ipynb и workshop_solution.ipynb."""
-import json, sys
+"""Генератор всех четырёх ноутбуков воркшопа."""
+import json, os, sys
 
 SETUP = r'''#@title Запусти эту ячейку и иди дальше (скачивание MNIST + проверки) { display-mode: "form" }
 import gzip, struct, urllib.request, os, base64
@@ -693,9 +693,11 @@ def build(solution: bool):
             "nbformat": 4, "nbformat_minor": 0}
 
 
-HEADER = r'''# Собираем нейросеть, которая узнаёт цифры
+HEADER = r'''# Собираем нейросеть с нуля — подробная версия
 
 Мы напишем с нуля сеть **784 → 16 → 16 → 10** — ту самую, что разбирается в видео [3Blue1Brown](https://www.youtube.com/watch?v=aircAruvnKk). Без PyTorch и TensorFlow: только numpy и восемь функций, которые ты напишешь сам.
+
+Это версия для тех, кто уверенно пишет на Python и хочет реализовать всю математику руками. Если ты здесь впервые — начни с [workshop.ipynb](https://colab.research.google.com/github/ewanpy00/Deeplearning_workshop/blob/main/workshop.ipynb), там то же самое за 30 минут.
 
 **Как это устроено.** Восемь шагов, в каждом — ячейка с `TODO` и ячейка с проверкой. Пиши код, запускай `check(N)`, получай зелёную галочку. Проверка не просто смотрит на результат: например, твой `backprop` она сверит с численной производной и подскажет, где именно ошибка.
 
@@ -705,15 +707,499 @@ HEADER = r'''# Собираем нейросеть, которая узнаёт 
 
 Начни с ячейки ниже — она скачает MNIST и включит проверки. Дальше иди по шагам сверху вниз.'''
 
-HEADER_SOL = r'''# Собираем нейросеть, которая узнаёт цифры — РЕШЕНИЕ
+HEADER_SOL = r'''# Собираем нейросеть с нуля — подробная версия, РЕШЕНИЕ
 
 Версия для ведущего: все восемь функций уже написаны. Ноутбук проходит целиком сверху вниз и даёт около 94% на тестовой выборке.
 
-Раздавать участникам нужно `workshop.ipynb`.'''
+Раздавать участникам нужно `workshop_advanced.ipynb`.'''
 
-for sol, path in ((False, sys.argv[1]), (True, sys.argv[2])):
-    nb = build(sol)
-    validate(nb, path)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(nb, f, ensure_ascii=False, indent=1)
-    print("написан", path)
+
+
+# ============================================================================
+#                      ЛЁГКАЯ ВЕРСИЯ НА 30 МИНУТ
+# ============================================================================
+# Студент не пишет математику: все функции готовы. Он задаёт архитектуру сети,
+# собирает цикл обучения из двух вызовов, запускает и экспериментирует.
+
+def _sol(name):
+    """Достаём готовую реализацию из подробной версии, чтобы две ветки не разъезжались."""
+    for ex in EX:
+        if ex["todo"].split("def ")[1].split("(")[0] == name:
+            return ex["sol"]
+    raise KeyError(name)
+
+
+LIGHT_SETUP = '''#@title Запусти эту ячейку — она скачает данные и подготовит всё остальное { display-mode: "form" }
+import gzip, struct, urllib.request, os, base64
+import numpy as np
+import matplotlib.pyplot as plt
+
+MIRRORS = ["https://storage.googleapis.com/cvdf-datasets/mnist/",
+           "https://ossci-datasets.s3.amazonaws.com/mnist/"]
+FILES = {"train_images": "train-images-idx3-ubyte.gz", "train_labels": "train-labels-idx1-ubyte.gz",
+         "test_images": "t10k-images-idx3-ubyte.gz",  "test_labels": "t10k-labels-idx1-ubyte.gz"}
+
+def _get(name):
+    if not os.path.exists(name):
+        for m in MIRRORS:
+            try:
+                urllib.request.urlretrieve(m + name, name); break
+            except Exception: pass
+    with gzip.open(name, "rb") as f:
+        magic, count = struct.unpack(">II", f.read(8))
+        if magic == 0x803:
+            rows, cols = struct.unpack(">II", f.read(8))
+            return np.frombuffer(f.read(rows*cols*count), np.uint8).reshape(count, rows*cols)
+        return np.frombuffer(f.read(count), np.uint8)
+
+def one_hot(labels):
+    y = np.zeros((10, labels.size)); y[labels, np.arange(labels.size)] = 1.0; return y
+
+print("Скачиваю картинки рукописных цифр ...")
+_raw = {k: _get(v) for k, v in FILES.items()}
+X_train = _raw["train_images"].T.astype(np.float64) / 255.0
+d_train = _raw["train_labels"].astype(np.int64)
+Y_train = one_hot(d_train)
+X_test  = _raw["test_images"].T.astype(np.float64) / 255.0
+y_test  = _raw["test_labels"].astype(np.int64)
+print(f"Готово: {X_train.shape[1]} картинок для обучения и {X_test.shape[1]} для проверки")
+
+# ---------------------------------------------- готовые кубики, из которых собирается сеть
+''' + _sol("sigmoid") + '''
+
+
+''' + _sol("sigmoid_prime") + '''
+
+
+class _Blank:
+    """Заглушка ___ : подставляется вместо числа, которое надо вписать."""
+    def __repr__(self): return "___"
+___ = _Blank()
+
+
+def init_network(sizes, seed=0):
+    """Создаёт сеть: случайные веса между соседними слоями и нулевые смещения."""
+    for s in sizes:
+        if isinstance(s, _Blank):
+            raise ValueError("В списке sizes остался пропуск ___ — впиши вместо него число")
+        if not isinstance(s, (int, np.integer)):
+            raise ValueError(f"Размер слоя должен быть целым числом, а не {s!r}")
+    rng = np.random.default_rng(seed)
+    weights = [rng.standard_normal((n_out, n_in)) / np.sqrt(n_in)
+               for n_in, n_out in zip(sizes[:-1], sizes[1:])]
+    biases = [np.zeros((n_out, 1)) for n_out in sizes[1:]]
+    return {"sizes": list(sizes), "weights": weights, "biases": biases}
+
+
+def count_parameters(net):
+    return sum(w.size for w in net["weights"]) + sum(b.size for b in net["biases"])
+
+
+''' + _sol("forward") + '''
+
+
+''' + _sol("predict") + '''
+
+
+''' + _sol("backprop") + '''
+
+
+''' + _sol("apply_gradients") + '''
+
+
+def FILL_ME(*args, **kwargs):
+    raise NotImplementedError(
+        "Здесь остался пропуск FILL_ME — замени его на имя нужной функции "
+        "(список доступных функций в комментарии над строкой)")
+
+# ------------------------------------------------------------- картинки и подготовка рисунка
+def resize_bilinear(img, oh, ow):
+    h, w = img.shape
+    ys, xs = np.linspace(0, h-1, oh), np.linspace(0, w-1, ow)
+    y0, x0 = np.floor(ys).astype(int), np.floor(xs).astype(int)
+    y1, x1 = np.minimum(y0+1, h-1), np.minimum(x0+1, w-1)
+    wy, wx = (ys-y0)[:, None], (xs-x0)[None, :]
+    top = img[np.ix_(y0, x0)]*(1-wx) + img[np.ix_(y0, x1)]*wx
+    bot = img[np.ix_(y1, x0)]*(1-wx) + img[np.ix_(y1, x1)]*wx
+    return top*(1-wy) + bot*wy
+
+def to_mnist(canvas, box=20, size=28):
+    ink = canvas > 0.05
+    if not ink.any(): return np.zeros((size, size))
+    r, c = np.where(ink.any(1))[0], np.where(ink.any(0))[0]
+    crop = canvas[r[0]:r[-1]+1, c[0]:c[-1]+1]
+    h, w = crop.shape
+    s = box / max(h, w)
+    nh, nw = max(1, round(h*s)), max(1, round(w*s))
+    digit = resize_bilinear(crop, nh, nw)
+    yy, xx = np.mgrid[0:nh, 0:nw]
+    cy, cx = (yy*digit).sum()/digit.sum(), (xx*digit).sum()/digit.sum()
+    out = np.zeros((size, size))
+    top  = int(np.clip(round(size/2 - cy), 0, size-nh))
+    left = int(np.clip(round(size/2 - cx), 0, size-nw))
+    out[top:top+nh, left:left+nw] = digit
+    return np.clip(out, 0, 1)
+
+def show_pixels(column, label=None):
+    """Слева картинка, справа тот же кусок в виде чисел — чтобы было видно, что картинка это числа."""
+    img = column.reshape(28, 28)
+    fig, (a1, a2) = plt.subplots(1, 2, figsize=(11, 5))
+    a1.imshow(img, cmap="gray_r"); a1.set_xticks([]); a1.set_yticks([])
+    a1.set_title("что видим мы" + (f" (это цифра {label})" if label is not None else ""))
+    piece = img[9:17, 9:17]
+    a2.imshow(piece, cmap="gray_r", vmin=0, vmax=1)
+    for r in range(8):
+        for c in range(8):
+            v = piece[r, c]
+            a2.text(c, r, f"{v:.1f}", ha="center", va="center", fontsize=8,
+                    color="white" if v > 0.5 else "#666")
+    a2.set_xticks([]); a2.set_yticks([])
+    a2.set_title("что видит компьютер (кусок 8×8 из центра)")
+    plt.tight_layout(); plt.show()
+
+def show_prediction(net, img, true_digit=None):
+    _, acts = forward(net, img.reshape(-1, 1))
+    out = acts[-1].ravel(); guess = int(np.argmax(out))
+    fig, (a1, a2) = plt.subplots(1, 2, figsize=(9, 3.4), gridspec_kw={"width_ratios": [1, 2]})
+    a1.imshow(img.reshape(28, 28), cmap="gray_r"); a1.set_xticks([]); a1.set_yticks([])
+    a1.set_title("картинка")
+    colors = ["#d1495b" if d == guess else "#4c72b0" for d in range(10)]
+    a2.barh(np.arange(10), out, color=colors); a2.invert_yaxis()
+    a2.set_yticks(range(10)); a2.set_xlim(0, 1)
+    a2.set_title("насколько ярко горит каждый из 10 выходных нейронов")
+    t = f"сеть говорит: {guess} (уверенность {out[guess]*100:.0f}%)"
+    if true_digit is not None:
+        t += "  — верно" if guess == true_digit else f"  — ошибка, это {true_digit}"
+    fig.suptitle(t, fontsize=13); plt.tight_layout(); plt.show()
+
+# --------------------------------------------------------------------------- две проверки
+def _need(name):
+    f = globals().get(name)
+    if f is None: raise AssertionError(f"переменной {name} ещё нет — запусти ячейку выше")
+    return f
+
+def _lcheck1():
+    sizes = _need("sizes")
+    assert not any(isinstance(s, _Blank) for s in sizes), "в sizes ещё остались пропуски ___"
+    assert sizes[0] == 784, (f"на входе {sizes[0]}, а должно быть 784: картинка 28×28 это "
+                             "28 · 28 = 784 числа, по одному на пиксель")
+    assert sizes[-1] == 10, (f"на выходе {sizes[-1]}, а должно быть 10: по одному нейрону "
+                             "на каждую цифру от 0 до 9")
+    net = _need("net")
+    return (f"сеть {' → '.join(map(str, sizes))} создана, "
+            f"в ней {count_parameters(net):,} настраиваемых чисел")
+
+def _lcheck2():
+    train = _need("train")
+    probe = init_network([784, 16, 16, 10], seed=7)
+    before = accuracy(probe, X_test[:, :2000], y_test[:2000])
+    train(probe, X_train[:, :6000], Y_train[:, :6000],
+          epochs=2, batch_size=10, eta=3.0, verbose=False)
+    after = accuracy(probe, X_test[:, :2000], y_test[:2000])
+    assert after > 0.55, (f"точность почти не выросла ({before:.0%} → {after:.0%}). "
+                          "Проверь порядок: сначала backprop считает, куда двигать веса, "
+                          "потом apply_gradients их двигает")
+    return f"обучение работает: на пробном запуске точность выросла с {before:.0%} до {after:.0%}"
+
+_LCHECKS = {1: ("сеть собрана", _lcheck1), 2: ("цикл обучения", _lcheck2)}
+
+def check(step):
+    name, fn = _LCHECKS[step]
+    try:
+        msg = fn()
+    except NotImplementedError as e:
+        print(f"❌ Проверка {step} ({name}): {e}"); return
+    except (AssertionError, ValueError) as e:
+        print(f"❌ Проверка {step} ({name}): {e}"); return
+    except Exception as e:
+        print(f"❌ Проверка {step} ({name}): код упал — {type(e).__name__}: {e}"); return
+    print(f"✅ Проверка {step} ({name}): {msg}")
+
+print("Всё готово. Листай ниже и запускай ячейки по порядку.")'''
+
+
+LIGHT_TRAIN_TODO = r'''def train(net, x, y, epochs=10, batch_size=10, eta=3.0, verbose=True):
+    """Цикл обучения. Тебе нужно вписать два вызова вместо FILL_ME.
+
+    Доступные функции:
+        backprop(net, картинки, ответы)  ->  grad_w, grad_b
+            смотрит на ошибку и считает, в какую сторону двигать каждый вес
+        apply_gradients(net, grad_w, grad_b, eta)
+            двигает веса в эту сторону; eta задаёт длину шага
+    """
+    rng = np.random.default_rng(0)
+    n = x.shape[1]
+
+    for epoch in range(1, epochs + 1):
+        order = rng.permutation(n)                      # перемешиваем картинки
+        for start in range(0, n, batch_size):
+            idx = order[start:start + batch_size]
+            batch_x = x[:, idx]                         # 10 картинок
+            batch_y = y[:, idx]                         # 10 правильных ответов
+
+            # ✏️ ШАГ 1: посчитать, куда двигать веса
+            grad_w, grad_b = FILL_ME(net, batch_x, batch_y)
+
+            # ✏️ ШАГ 2: сдвинуть веса в эту сторону
+            FILL_ME(net, grad_w, grad_b, eta)
+
+        if verbose:
+            print(f"Эпоха {epoch:2d}: сеть узнаёт {accuracy(net, X_test, y_test)*100:5.2f}% цифр")
+    return net'''
+
+LIGHT_TRAIN_SOL = LIGHT_TRAIN_TODO \
+    .replace("grad_w, grad_b = FILL_ME(net, batch_x, batch_y)",
+             "grad_w, grad_b = backprop(net, batch_x, batch_y)") \
+    .replace("FILL_ME(net, grad_w, grad_b, eta)",
+             "apply_gradients(net, grad_w, grad_b, eta)") \
+    .replace('"""Цикл обучения. Тебе нужно вписать два вызова вместо FILL_ME.',
+             '"""Цикл обучения.')
+
+
+LIGHT = [
+("md", r'''# Твоя первая нейросеть — за 30 минут
+
+К концу этого ноутбука у тебя будет работающая программа, которая узнаёт рукописные цифры. В самом конце ты нарисуешь цифру мышкой, и она её прочитает.
+
+Опыт в машинном обучении не нужен. Почти весь код уже написан — твоя задача собрать из готовых кусков работающую сеть, обучить её и посмотреть, что получится. Вписать нужно всего несколько слов, места помечены значком ✏️.
+
+**Как работать:** запускай ячейки сверху вниз кнопкой ▶ слева от ячейки (или `Shift+Enter`).
+
+**Сделай это прямо сейчас:** `File → Save a copy in Drive`. Иначе твои правки не сохранятся.'''),
+
+("code", "LIGHT_SETUP"),
+
+("md", r'''---
+## Часть 1. Картинка — это просто числа
+
+Компьютер не видит «двойку». Он видит квадрат 28 × 28 пикселей, а каждый пиксель — число от 0 (белый) до 1 (чёрный).
+
+Итого **28 · 28 = 784 числа** на картинку. Это всё, что получает наша сеть на вход.
+
+Запусти ячейку ниже. Слева — картинка, справа — кусочек из её центра, но уже числами. Поменяй номер `i` и запусти ещё раз, чтобы посмотреть другие цифры.'''),
+
+("code", r'''i = 0     # ✏️ поставь любой номер от 0 до 59999 и запусти ячейку заново
+
+show_pixels(X_train[:, i], d_train[i])'''),
+
+("md", r'''---
+## Часть 2. Собираем сеть
+
+Сеть — это несколько слоёв нейронов. Числа с картинки входят слева, проходят через слои и превращаются в ответ справа.
+
+Нам нужно решить, сколько нейронов в каждом слое:
+
+- **Первый слой (вход).** Сюда попадают пиксели. Сколько их в картинке 28 × 28?
+- **Два средних слоя.** Здесь сеть ищет что-то своё, промежуточное. Возьмём по 16 нейронов — это просто разумное число, его можно будет поменять.
+- **Последний слой (выход).** Один нейрон на каждый возможный ответ. Сколько всего цифр?
+
+✏️ **Впиши два числа вместо `___`.**'''),
+
+{"todo": r'''sizes = [___, 16, 16, ___]
+#         ↑              ↑
+#   сколько пикселей   сколько разных цифр
+#   в картинке 28×28   может быть в ответе
+
+net = init_network(sizes)
+
+print("Слои сети:", " → ".join(str(s) for s in net["sizes"]))
+print("Чисел, которые сеть будет подбирать:", f"{count_parameters(net):,}")''',
+ "sol": r'''sizes = [784, 16, 16, 10]
+#         ↑              ↑
+#   сколько пикселей   сколько разных цифр
+#   в картинке 28×28   может быть в ответе
+
+net = init_network(sizes)
+
+print("Слои сети:", " → ".join(str(s) for s in net["sizes"]))
+print("Чисел, которые сеть будет подбирать:", f"{count_parameters(net):,}")'''},
+
+("code", "check(1)"),
+
+("md", r'''---
+## Часть 3. Сейчас сеть не умеет ничего
+
+Все эти 13 тысяч чисел пока случайные. Посмотрим, что сеть отвечает.
+
+Десять полосок справа — это десять выходных нейронов, по одному на цифру. Сеть отвечает той цифрой, чей нейрон горит ярче всех.'''),
+
+("code", r'''print(f"Необученная сеть угадывает {accuracy(net, X_test, y_test)*100:.1f}% цифр")
+print("Это примерно как отвечать наугад: вариантов десять, попадаешь в каждый десятый раз.\n")
+
+show_prediction(net, X_test[:, 0], int(y_test[0]))'''),
+
+("md", r'''---
+## Часть 4. Как сеть учится
+
+Идея обучения простая, и вся она умещается в два действия:
+
+1. Сеть смотрит на 10 картинок и говорит свои ответы. Мы сравниваем их с правильными и получаем ошибку.
+2. Дальше нужно понять, **в какую сторону подвинуть каждое из 13 тысяч чисел**, чтобы в следующий раз ошибка была чуть меньше. Это считает функция `backprop`.
+3. И наконец подвинуть их — этим занимается `apply_gradients`.
+
+Потом взять следующие 10 картинок и повторить. За один проход по всем 60 000 картинкам таких шажков получается 6000. Каждый шажок делает сеть чуть-чуть лучше.
+
+✏️ **Впиши имена двух функций вместо `FILL_ME`.** Порядок важен: сначала считаем, куда двигать, потом двигаем.'''),
+
+{"todo": "LIGHT_TRAIN_TODO", "sol": "LIGHT_TRAIN_SOL"},
+
+("code", "check(2)"),
+
+("md", r'''---
+## Часть 5. Запускаем обучение
+
+Теперь всё готово. Запусти ячейку и смотри, как растёт точность: это займёт меньше минуты.
+
+Обрати внимание на первую эпоху — за один проход сеть прыгает с 10% почти до 90%.'''),
+
+("code", r'''net = init_network(sizes)          # начинаем с чистой сети
+
+train(net, X_train, Y_train, epochs=10, batch_size=10, eta=3.0)
+
+print(f"\nГотово. Твоя сеть узнаёт {accuracy(net, X_test, y_test)*100:.2f}% цифр,")
+print("причём на картинках, которых она никогда не видела.")'''),
+
+("md", r'''---
+## Часть 6. Смотрим, что получилось
+
+Запусти несколько раз — каждый раз берётся случайная картинка.'''),
+
+("code", r'''i = np.random.randint(X_test.shape[1])
+show_prediction(net, X_test[:, i], int(y_test[i]))'''),
+
+("md", r'''## Где она ошибается
+
+Самое интересное — ошибки. Посмотри на полоски: в этих случаях сеть обычно колеблется между двумя цифрами, и часто это ровно те цифры, которые и человек спутал бы.'''),
+
+("code", r'''errors = np.where(predict(net, X_test) != y_test)[0]
+print(f"Сеть ошибается на {len(errors)} картинках из {len(y_test)}\n")
+
+for i in np.random.choice(errors, 2, replace=False):
+    show_prediction(net, X_test[:, i], int(y_test[i]))'''),
+
+("md", r'''---
+## Часть 7. Нарисуй свою цифру
+
+Рисуй мышкой в белом квадрате, потом нажми **Распознать**.
+
+Перед тем как показать рисунок сети, программа его подгоняет: обрезает по краям, уменьшает и ставит по центру. Все картинки, на которых сеть училась, выглядят именно так, и без этой подгонки она путается — например, если нарисовать цифру в углу.'''),
+
+("code", r'''CANVAS_HTML = """
+<canvas id="cnv" width="280" height="280"
+        style="border:2px solid #444;border-radius:6px;background:#fff;touch-action:none;cursor:crosshair"></canvas>
+<div style="margin-top:8px">
+  <button id="btn_clear" style="padding:6px 14px">Очистить</button>
+  <button id="btn_done"  style="padding:6px 14px;font-weight:bold">Распознать</button>
+</div>
+<script>
+var cnv = document.getElementById('cnv'), ctx = cnv.getContext('2d');
+ctx.lineWidth = 22; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#000';
+var drawing = false;
+function pos(e) { var r = cnv.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; }
+cnv.addEventListener('pointerdown', function(e) { drawing = true; var p = pos(e); ctx.beginPath(); ctx.moveTo(p[0], p[1]); });
+cnv.addEventListener('pointermove', function(e) { if (!drawing) return; var p = pos(e); ctx.lineTo(p[0], p[1]); ctx.stroke(); });
+window.addEventListener('pointerup', function() { drawing = false; });
+document.getElementById('btn_clear').onclick = function() { ctx.clearRect(0, 0, 280, 280); };
+var drawn_digit = new Promise(function(resolve) {
+  document.getElementById('btn_done').onclick = function() {
+    var d = ctx.getImageData(0, 0, 280, 280).data, s = '';
+    for (var i = 0; i < 280 * 280; i++) { s += String.fromCharCode(d[i * 4 + 3]); }
+    resolve(btoa(s));
+  };
+});
+</script>
+"""
+
+try:
+    from IPython.display import display, HTML
+    from google.colab import output as _colab_output
+    display(HTML(CANVAS_HTML))
+    b64 = _colab_output.eval_js("drawn_digit", timeout_sec=600)
+    canvas = np.frombuffer(base64.b64decode(b64), np.uint8).reshape(280, 280).astype(float) / 255.0
+    show_prediction(net, to_mnist(canvas))
+except ImportError:
+    print("Холст для рисования работает только в Google Colab.")
+    i = np.random.randint(X_test.shape[1])
+    show_prediction(net, X_test[:, i], int(y_test[i]))'''),
+
+("md", r'''---
+## Часть 8. Сломай её
+
+Теперь самое полезное: посмотреть, от чего результат зависит. Меняй одно число, запускай ячейку ниже и смотри, что стало с точностью.
+
+| Что поменять | Что попробовать | Что должно произойти |
+|---|---|---|
+| размер средних слоёв | `[784, 4, 4, 10]` | нейронов слишком мало, чтобы различить все цифры |
+| число слоёв | `[784, 16, 10]` | один средний слой вместо двух — сильно ли хуже? |
+| длина шага `eta` | `0.01` | шаги крошечные, обучение почти стоит |
+| длина шага `eta` | `30.0` | шаги огромные, сеть перепрыгивает нужное место |
+| число проходов | `epochs=1` | сколько получится за один проход? |'''),
+
+("code", r'''# ✏️ меняй числа здесь и запускай ячейку целиком
+
+my_sizes = [784, 16, 16, 10]
+my_eta = 3.0
+my_epochs = 5
+
+experiment = init_network(my_sizes)
+train(experiment, X_train, Y_train, epochs=my_epochs, batch_size=10, eta=my_eta)
+print(f"\nИтог: {accuracy(experiment, X_test, y_test)*100:.2f}%")'''),
+
+("md", r'''---
+## Что у тебя теперь есть
+
+Работающая нейросеть, написанная без единой готовой библиотеки для машинного обучения — только numpy, то есть обычная арифметика с массивами чисел. Ни PyTorch, ни TensorFlow здесь нет.
+
+И главное: то, что ты сейчас собрал, — не игрушечная схема, а именно то, как работают настоящие нейросети. Большие модели отличаются размером, формой слоёв и хитростями в обучении, но два действия внутри цикла остаются теми же: **посчитать, куда двигать веса, и подвинуть их**.
+
+**Хочешь написать всю математику сам?** Есть подробная версия этого же ноутбука, где `backprop` и остальные функции пишутся с нуля по формулам — [workshop_advanced.ipynb](https://colab.research.google.com/github/ewanpy00/Deeplearning_workshop/blob/main/workshop_advanced.ipynb).
+
+**Откуда всё это:** [видео 3Blue1Brown про нейросети](https://www.youtube.com/watch?v=aircAruvnKk) — лучшее визуальное объяснение того, что происходит внутри.'''),
+]
+
+
+LIGHT_HEADER_SOL = r'''# Твоя первая нейросеть — за 30 минут (РЕШЕНИЕ)
+
+Версия для ведущего: оба пропуска заполнены. Ноутбук проходит целиком и даёт около 93%.
+
+Участникам раздавать `workshop.ipynb`.'''
+
+
+def build_light(solution: bool):
+    named = {"LIGHT_SETUP": LIGHT_SETUP,
+             "LIGHT_TRAIN_TODO": LIGHT_TRAIN_TODO,
+             "LIGHT_TRAIN_SOL": LIGHT_TRAIN_SOL}
+    cells = []
+    for item in LIGHT:
+        if isinstance(item, dict):
+            src = item["sol"] if solution else item["todo"]
+            cells.append(cell("code", named.get(src, src)))
+        else:
+            kind, src = item
+            src = named.get(src, src)
+            if solution and kind == "md" and src.startswith("# Твоя первая нейросеть"):
+                src = LIGHT_HEADER_SOL
+            cells.append(cell(kind, src))
+    return {"cells": cells,
+            "metadata": {"kernelspec": {"display_name": "Python 3", "name": "python3"},
+                         "language_info": {"name": "python"},
+                         "colab": {"provenance": [], "toc_visible": True}},
+            "nbformat": 4, "nbformat_minor": 0}
+
+
+TARGETS = [
+    ("workshop.ipynb",                   lambda: build_light(False)),
+    ("workshop_solution.ipynb",          lambda: build_light(True)),
+    ("workshop_advanced.ipynb",          lambda: build(False)),
+    ("workshop_advanced_solution.ipynb", lambda: build(True)),
+]
+
+if __name__ == "__main__":
+    out_dir = sys.argv[1] if len(sys.argv) > 1 else "."
+    for name, make in TARGETS:
+        path = os.path.join(out_dir, name)
+        nb = make()
+        validate(nb, path)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(nb, f, ensure_ascii=False, indent=1)
+        print("написан", path)
