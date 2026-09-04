@@ -1,2 +1,2 @@
 numpy>=1.24
-matplotlib>=3.7    # нужен только для draw.py и weights.py
+matplotlib>=3.7    # only needed for draw.py and weights.py

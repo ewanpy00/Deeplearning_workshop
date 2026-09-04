@@ -1,18 +1,18 @@
-"""Нейросеть с двумя скрытыми слоями «как у 3Blue1Brown»: 784 -> 16 -> 16 -> 10.
+"""A neural network with two hidden layers, 3Blue1Brown style: 784 -> 16 -> 16 -> 10.
 
-Никаких фреймворков — только numpy. Все формулы соответствуют видео:
+No frameworks — just numpy. Every formula matches the video:
 
-    z^l = W^l a^(l-1) + b^l          (взвешенная сумма)
-    a^l = sigma(z^l)                 (активация нейрона)
+    z^l = W^l a^(l-1) + b^l          (weighted sum)
+    a^l = sigma(z^l)                 (neuron activation)
 
-Обратное распространение (chapters 3-4):
+Backpropagation (chapters 3-4):
 
-    delta^L = grad_a C  (*)  sigma'(z^L)              — ошибка выходного слоя
-    delta^l = (W^(l+1))^T delta^(l+1)  (*)  sigma'(z^l)  — ошибка проталкивается назад
+    delta^L = grad_a C  (*)  sigma'(z^L)                 — error of the output layer
+    delta^l = (W^(l+1))^T delta^(l+1)  (*)  sigma'(z^l)  — error pushed back a layer
     dC/dW^l = delta^l (a^(l-1))^T
     dC/db^l = delta^l
 
-(*) — поэлементное умножение.
+(*) is element-wise multiplication.
 """
 
 from __future__ import annotations
@@ -21,43 +21,43 @@ import numpy as np
 
 
 def sigmoid(z):
-    """Сплющивает любое число в диапазон (0, 1) — «насколько сильно горит нейрон»."""
+    """Squashes any number into the range (0, 1) — "how brightly the neuron fires"."""
     return 1.0 / (1.0 + np.exp(-np.clip(z, -500, 500)))
 
 
 def sigmoid_prime(z):
-    """Производная сигмоиды: sigma'(z) = sigma(z) * (1 - sigma(z))."""
+    """Derivative of the sigmoid: sigma'(z) = sigma(z) * (1 - sigma(z))."""
     s = sigmoid(z)
     return s * (1.0 - s)
 
 
 class Network:
-    """Полносвязная сеть произвольной глубины (по умолчанию — [784, 16, 16, 10])."""
+    """A fully connected network of any depth (784, 16, 16, 10 by default)."""
 
     def __init__(self, sizes=(784, 16, 16, 10), cost="mse", seed=None):
         self.sizes = list(sizes)
         self.num_layers = len(self.sizes)
-        self.cost = cost  # "mse" — как в видео, "cross-entropy" — учится быстрее
+        self.cost = cost  # "mse" as in the video, "cross-entropy" learns a little faster
 
         rng = np.random.default_rng(seed)
-        # Веса слоя l — матрица (нейронов в слое l) x (нейронов в слое l-1).
-        # Делим на sqrt(входов), чтобы z не улетали в насыщение сигмоиды.
+        # The weights of layer l form a (neurons in layer l) x (neurons in layer l-1) matrix.
+        # We divide by sqrt(inputs) to keep z from saturating the sigmoid.
         self.weights = [
             rng.standard_normal((y, x)) / np.sqrt(x)
             for x, y in zip(self.sizes[:-1], self.sizes[1:])
         ]
         self.biases = [np.zeros((y, 1)) for y in self.sizes[1:]]
 
-    # ---------------------------------------------------------------- прямой ход
+    # ------------------------------------------------------------- forward pass
 
     def feedforward(self, a):
-        """a — матрица 784 x N. Возвращает активации выходного слоя (10 x N)."""
+        """a is a 784 x N matrix. Returns the activations of the output layer (10 x N)."""
         for w, b in zip(self.weights, self.biases):
             a = sigmoid(w @ a + b)
         return a
 
     def forward_all(self, a):
-        """То же, но сохраняет все промежуточные z и a — нужно для backprop и визуализации."""
+        """Same, but keeps every intermediate z and a — needed for backprop and plots."""
         activations = [a]
         zs = []
         for w, b in zip(self.weights, self.biases):
@@ -68,25 +68,25 @@ class Network:
         return zs, activations
 
     def predict(self, x):
-        """Номер самого «яркого» выходного нейрона — это и есть ответ сети."""
+        """The index of the brightest output neuron is the network's answer."""
         return np.argmax(self.feedforward(x), axis=0)
 
-    # ---------------------------------------------------- обратное распространение
+    # ------------------------------------------------------------ backpropagation
 
     def backprop(self, x, y):
-        """Градиенты стоимости по всем весам и смещениям для мини-батча (x, y).
+        """Gradients of the cost for every weight and bias over a mini-batch (x, y).
 
-        x: 784 x m, y: 10 x m. Возвращает списки dW и db, усреднённые по батчу.
+        x: 784 x m, y: 10 x m. Returns dW and db lists averaged over the batch.
         """
         m = x.shape[1]
         zs, activations = self.forward_all(x)
 
-        # Ошибка последнего слоя.
+        # Error of the last layer.
         if self.cost == "cross-entropy":
-            # Для кросс-энтропии с сигмоидой множитель sigma'(z) красиво сокращается.
+            # With cross-entropy and a sigmoid the sigma'(z) factor cancels out neatly.
             delta = activations[-1] - y
         else:
-            # Квадратичная стоимость C = 1/2 * sum (a - y)^2 — ровно как в видео.
+            # Quadratic cost C = 1/2 * sum (a - y)^2 — exactly as in the video.
             delta = (activations[-1] - y) * sigmoid_prime(zs[-1])
 
         grad_w = [None] * len(self.weights)
@@ -94,7 +94,7 @@ class Network:
         grad_w[-1] = delta @ activations[-2].T / m
         grad_b[-1] = delta.sum(axis=1, keepdims=True) / m
 
-        # Идём назад по слоям: -2, -3, ... Каждый раз тянем ошибку через W^T.
+        # Walk backwards through the layers: -2, -3, ... dragging the error through W^T.
         for l in range(2, self.num_layers):
             delta = (self.weights[-l + 1].T @ delta) * sigmoid_prime(zs[-l])
             grad_w[-l] = delta @ activations[-l - 1].T / m
@@ -102,14 +102,14 @@ class Network:
 
         return grad_w, grad_b
 
-    # ------------------------------------------------------------------- обучение
+    # ------------------------------------------------------------------ training
 
     def sgd(self, x_train, y_train, epochs=30, batch_size=10, eta=3.0,
             test_data=None, seed=None, verbose=True):
-        """Стохастический градиентный спуск: спускаемся по «холмистому ландшафту» стоимости.
+        """Stochastic gradient descent: walking down the hilly landscape of the cost.
 
-        Каждую эпоху перемешиваем выборку, режем на мини-батчи и на каждом делаем
-        один шаг:  W <- W - eta * dC/dW.
+        Every epoch we shuffle the data, cut it into mini-batches and take one step
+        on each:  W <- W - eta * dC/dW.
         """
         rng = np.random.default_rng(seed)
         n = x_train.shape[1]
@@ -128,13 +128,13 @@ class Network:
                 acc = self.accuracy(*test_data)
                 history.append(acc)
                 if verbose:
-                    print(f"Эпоха {epoch:2d}/{epochs}: точность на тесте {acc * 100:5.2f}%")
+                    print(f"Epoch {epoch:2d}/{epochs}: test accuracy {acc * 100:5.2f}%")
             elif verbose:
-                print(f"Эпоха {epoch:2d}/{epochs} завершена")
+                print(f"Epoch {epoch:2d}/{epochs} done")
 
         return history
 
-    # ------------------------------------------------------------------- метрики
+    # ------------------------------------------------------------------- metrics
 
     def accuracy(self, x, y_digits):
         return float(np.mean(self.predict(x) == y_digits))
@@ -146,7 +146,7 @@ class Network:
             return float(np.mean(-np.sum(y * np.log(a + eps) + (1 - y) * np.log(1 - a + eps), axis=0)))
         return float(np.mean(0.5 * np.sum((a - y) ** 2, axis=0)))
 
-    # --------------------------------------------------------- сохранение/загрузка
+    # ----------------------------------------------------------- saving / loading
 
     def save(self, path):
         np.savez(

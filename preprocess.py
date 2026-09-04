@@ -1,16 +1,16 @@
-"""Приведение нарисованной от руки цифры к формату MNIST.
+"""Turning a hand-drawn digit into MNIST format.
 
-Картинки MNIST сделаны не «как получилось»: цифру обрезают по краям чернил,
-вписывают в квадрат 20x20 и кладут в поле 28x28 так, чтобы центр масс оказался
-в середине. Если этого не сделать, сеть, обученная на MNIST, будет ошибаться
-даже на аккуратно нарисованной цифре.
+MNIST images are not left as they came: the digit is cropped to its ink, fitted into
+a 20x20 square and placed in a 28x28 field so that its centre of mass sits in the
+middle. Skip that and a network trained on MNIST will misread even a carefully
+drawn digit.
 """
 
 import numpy as np
 
 
 def resize_bilinear(img, out_h, out_w):
-    """Билинейное масштабирование двумерного массива — чистый numpy, без SciPy/PIL."""
+    """Bilinear resize of a 2D array — pure numpy, no SciPy or PIL."""
     h, w = img.shape
     if h == out_h and w == out_w:
         return img.copy()
@@ -30,17 +30,17 @@ def resize_bilinear(img, out_h, out_w):
 
 
 def box_downsample(img, factor):
-    """Усреднение блоками factor x factor — даёт мягкие края, как у MNIST."""
+    """Average over factor x factor blocks — gives the soft edges MNIST has."""
     h, w = img.shape
     return img.reshape(h // factor, factor, w // factor, factor).mean(axis=(1, 3))
 
 
 def to_mnist(canvas, box=20, size=28, threshold=0.05):
-    """Из произвольного холста (значения 0..1, чернила = 1) делает картинку 28x28.
+    """Turns an arbitrary canvas (values 0..1, ink = 1) into a 28x28 image.
 
-    1) обрезаем по границам чернил;
-    2) вписываем в квадрат box x box, сохраняя пропорции;
-    3) кладём в поле size x size так, чтобы центр масс был в центре.
+    1) crop to the bounds of the ink;
+    2) fit into a box x box square, keeping the aspect ratio;
+    3) place in a size x size field so the centre of mass is at the centre.
     """
     ink = canvas > threshold
     if not ink.any():
@@ -50,14 +50,14 @@ def to_mnist(canvas, box=20, size=28, threshold=0.05):
     cols = np.where(ink.any(axis=0))[0]
     cropped = canvas[rows[0]:rows[-1] + 1, cols[0]:cols[-1] + 1]
 
-    # Масштабируем так, чтобы длинная сторона стала равна box.
+    # Scale so that the longer side becomes box.
     h, w = cropped.shape
     scale = box / max(h, w)
     new_h = max(1, int(round(h * scale)))
     new_w = max(1, int(round(w * scale)))
     digit = resize_bilinear(cropped, new_h, new_w)
 
-    # Центр масс цифры совмещаем с центром поля 28x28.
+    # Line the digit's centre of mass up with the centre of the 28x28 field.
     yy, xx = np.mgrid[0:new_h, 0:new_w]
     total = digit.sum()
     com_y = (yy * digit).sum() / total

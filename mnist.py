@@ -1,9 +1,9 @@
-"""Загрузка MNIST без сторонних библиотек: скачиваем idx-файлы и читаем их сами.
+"""Loading MNIST without third-party libraries: we download the idx files and parse them ourselves.
 
-Формат IDX (описан на сайте Яна Лекуна):
-    [0:4]  магическое число (0x00000803 для картинок, 0x00000801 для меток)
-    [4:8]  количество элементов
-    далее для картинок: [8:12] строк, [12:16] столбцов, затем сами байты 0..255
+The IDX format (described on Yann LeCun's site):
+    [0:4]  magic number (0x00000803 for images, 0x00000801 for labels)
+    [4:8]  number of items
+    then for images: [8:12] rows, [12:16] columns, followed by the raw bytes 0..255
 """
 
 import gzip
@@ -29,7 +29,7 @@ FILES = {
 
 
 def _download(name: str) -> Path:
-    """Скачиваем файл один раз и кэшируем в ./data."""
+    """Download the file once and cache it in ./data."""
     DATA_DIR.mkdir(exist_ok=True)
     path = DATA_DIR / name
     if path.exists():
@@ -38,39 +38,39 @@ def _download(name: str) -> Path:
     last_error = None
     for mirror in MIRRORS:
         try:
-            print(f"Скачиваю {name} ...")
+            print(f"Downloading {name} ...")
             urllib.request.urlretrieve(mirror + name, path)
             return path
-        except Exception as exc:  # пробуем следующее зеркало
+        except Exception as exc:  # try the next mirror
             last_error = exc
-    raise RuntimeError(f"Не удалось скачать {name}: {last_error}")
+    raise RuntimeError(f"Could not download {name}: {last_error}")
 
 
 def _read_idx(path: Path) -> np.ndarray:
     with gzip.open(path, "rb") as f:
         magic, count = struct.unpack(">II", f.read(8))
-        if magic == 0x803:  # картинки
+        if magic == 0x803:  # images
             rows, cols = struct.unpack(">II", f.read(8))
             buf = f.read(rows * cols * count)
             return np.frombuffer(buf, dtype=np.uint8).reshape(count, rows * cols)
-        if magic == 0x801:  # метки
+        if magic == 0x801:  # labels
             buf = f.read(count)
             return np.frombuffer(buf, dtype=np.uint8)
-        raise ValueError(f"Неизвестное магическое число {magic:#x} в {path}")
+        raise ValueError(f"Unknown magic number {magic:#x} in {path}")
 
 
 def one_hot(labels: np.ndarray) -> np.ndarray:
-    """Цифра 3 -> вектор-столбец с единицей на позиции 3 (это и есть «правильный ответ» сети)."""
+    """Digit 3 -> a column vector with a 1 at position 3 (the network's target answer)."""
     y = np.zeros((10, labels.size))
     y[labels, np.arange(labels.size)] = 1.0
     return y
 
 
 def load():
-    """Возвращает (X_train, Y_train, y_train, X_test, y_test).
+    """Returns (X_train, Y_train, y_train, X_test, y_test).
 
-    X — матрица 784 x N: один столбец = одна картинка, значения приведены к [0, 1].
-    Y — матрица 10 x N с one-hot ответами, y — просто цифры 0..9.
+    X is a 784 x N matrix: one column per image, values scaled to [0, 1].
+    Y is a 10 x N matrix of one-hot answers, y is just the digits 0..9.
     """
     raw = {k: _read_idx(_download(v)) for k, v in FILES.items()}
 
