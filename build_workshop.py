@@ -652,6 +652,8 @@ train(net, X_train, Y_train, epochs=10, eta=30.0, x_test=X_test, y_test_digits=y
 
 
 def cell(kind, src):
+    kind = {"md": "markdown"}.get(kind, kind)   # Colab не понимает "md" и отказывается открывать ноутбук
+    assert kind in ("markdown", "code"), f"недопустимый тип ячейки: {kind}"
     lines = src.split("\n")
     source = [l + "\n" for l in lines[:-1]] + [lines[-1]]
     c = {"cell_type": kind, "metadata": {}, "source": source}
@@ -659,6 +661,20 @@ def cell(kind, src):
         c["execution_count"] = None
         c["outputs"] = []
     return c
+
+
+def validate(nb, path):
+    """Минимальная проверка формата: Colab молча падает на кривом ноутбуке."""
+    assert nb["nbformat"] == 4, "ожидается nbformat 4"
+    for i, c in enumerate(nb["cells"]):
+        t = c["cell_type"]
+        assert t in ("markdown", "code"), f"{path}: ячейка {i} имеет cell_type={t!r}"
+        assert isinstance(c["source"], list), f"{path}: ячейка {i}: source должен быть списком строк"
+        assert isinstance(c["metadata"], dict), f"{path}: ячейка {i}: нет metadata"
+        if t == "code":
+            assert "outputs" in c and "execution_count" in c, \
+                f"{path}: ячейка {i}: у code-ячейки должны быть outputs и execution_count"
+    print(f"  проверка формата пройдена: {len(nb['cells'])} ячеек")
 
 
 def build(solution: bool):
@@ -696,6 +712,8 @@ HEADER_SOL = r'''# Собираем нейросеть, которая узна�
 Раздавать участникам нужно `workshop.ipynb`.'''
 
 for sol, path in ((False, sys.argv[1]), (True, sys.argv[2])):
+    nb = build(sol)
+    validate(nb, path)
     with open(path, "w", encoding="utf-8") as f:
-        json.dump(build(sol), f, ensure_ascii=False, indent=1)
+        json.dump(nb, f, ensure_ascii=False, indent=1)
     print("написан", path)
